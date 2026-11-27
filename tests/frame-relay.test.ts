@@ -159,6 +159,8 @@ interface Harness {
 function mount(
   cfg: object,
   opts: {
+    /** Simulate a host that authorizes routes and passes the admitted peer. */
+    routeAuth?: boolean;
     openAgentWindow?: () => Promise<unknown>;
     loginImport?: (o: unknown) => Promise<unknown>;
     getExecutorStatus?: () => Record<string, unknown>;
@@ -204,11 +206,11 @@ function mount(
     spawns,
     surface,
     fire: () => { for (const cb of [...listeners]) cb(); },
-    async invoke(path: string, req: unknown = makeReq(path)) {
+    async invoke(path: string, req: unknown = makeReq(path), peer?: unknown) {
       const handler = routes.get(path);
       if (!handler) throw new Error("no route registered for " + path);
       const res = makeRes();
-      await handler(req, res);
+      await (handler as (r: unknown, s: unknown, p?: unknown) => unknown)(req, res, opts.routeAuth ? (peer ?? { peerId: "desktop" }) : undefined);
       return res;
     },
   };
@@ -272,10 +274,17 @@ describe("frame relay disabled", () => {
     expect(typeof body.toolCallCount).toBe("number");
   });
 
-  it("still enforces the trust fence (no cookie → 401, not a refusal)", async () => {
+  it("still enforces the trust fence on legacy hosts (no cookie → 401, not a refusal)", async () => {
     const h = mount(resolveConfig({ disableFrameRelay: true }));
     const res = await h.invoke("/api/ego/spaces", { method: "GET", url: "/api/ego/spaces", headers: {}, async *[Symbol.asyncIterator]() {} });
     expect(res.statusCode).toBe(401);
+  });
+
+  it("serves a host-admitted Desktop request without a legacy cookie (#115)", async () => {
+    const h = mount(resolveConfig({ disableFrameRelay: true }), { routeAuth: true });
+    const res = await h.invoke("/api/ego/spaces", { method: "GET", url: "/api/ego/spaces", headers: {}, async *[Symbol.asyncIterator]() {} });
+    expect(res.statusCode).toBe(200);
+    expect(parseBody(res).frameRelay).toBe(false);
   });
 
   it("leaves the non-relay routes working (raise / login-import are not frame paths)", async () => {

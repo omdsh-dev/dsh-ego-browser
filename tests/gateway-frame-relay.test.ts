@@ -42,7 +42,7 @@ function makeReq(body: unknown, options: { auth?: boolean; url?: string } = {}) 
 }
 
 /** Mount the gateway over a stubbed settings service + webServer. */
-function mountGateway(initial: Record<string, unknown>) {
+function mountGateway(initial: Record<string, unknown>, routeAuth = false) {
   const cfg: Record<string, unknown> = { ...initial };
   const captured: Record<string, unknown>[] = [];
   let handler: ((req: unknown, res: unknown) => unknown) | undefined;
@@ -65,19 +65,31 @@ function mountGateway(initial: Record<string, unknown>) {
     cfg, captured,
     async set(patch: Record<string, unknown>, options: { auth?: boolean } = {}) {
       const res = makeRes();
-      await handler!(makeReq({ patch }, options), res);
+      await call(makeReq({ patch }, options), res);
       return res;
     },
     async invoke(method: "get" | "set", body: unknown, options: { auth?: boolean } = {}) {
       const res = makeRes();
-      await handler!(makeReq(body, { ...options, url: `/ego/api/${method}` }), res);
+      await call(makeReq(body, { ...options, url: `/ego/api/${method}` }), res);
       return res;
     },
   };
+  /** Newer hosts dispatch with the admitted peer; legacy hosts do not. */
+  async function call(req: unknown, res: unknown) {
+    const handle = handler as (r: unknown, s: unknown, p?: unknown) => unknown
+    await handle(req, res, routeAuth ? { peerId: "desktop" } : undefined)
+  }
 }
 
 describe("ego-browser settings gateway — auth and local-only keys", () => {
-  it("rejects unauthenticated get and set requests", async () => {
+  it("serves a host-admitted Desktop request without a legacy cookie (#115)", async () => {
+    const g = mountGateway({}, true);
+    expect((await g.invoke("get", {}, { auth: false })).statusCode).toBe(200);
+    expect((await g.set({ idleTimeoutMin: 30 }, { auth: false })).statusCode).toBe(200);
+    expect(g.captured).toEqual([{ idleTimeoutMin: 30 }]);
+  });
+
+  it("rejects unauthenticated get and set requests on legacy hosts", async () => {
     const g = mountGateway({});
     const get = await g.invoke("get", {}, { auth: false });
     expect(get.statusCode).toBe(401);

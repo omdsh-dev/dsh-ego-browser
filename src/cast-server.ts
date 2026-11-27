@@ -13,6 +13,7 @@
  * "no live browser right now" instead of erroring.
  */
 import { request, type ClientRequest, type IncomingMessage, type ServerResponse } from 'node:http'
+import { registerAuthenticatedRoute } from './route-auth.ts'
 import type { EgoContext, RegisterRouteOptions, ResolvedConfig, WebServerLike } from './types.ts'
 import type { SettingsBridge } from './settings.ts'
 import type { FfmpegInstallationManager } from './ffmpeg-installation.ts'
@@ -405,34 +406,15 @@ export function initCastServer(
   // ── trust fence for /api/ego/* ────────────────────────────────────────────
   // Exact-path routes match BEFORE the host's `/api` prefix trust-fence route,
   // so every handler below would otherwise answer unauthenticated requests.
-  // The host issues a `dsh-auth-<processKey>` cookie that is HttpOnly AND
-  // SameSite=Strict: a cross-site page (CSRF driver-by) never carries it, so
-  // requiring its mere presence closes the remote surface. A local process can
-  // still forge the header, but that is the same threat tier as the host's own
-  // token fence (a local process can read the process token too).
-  const isTrustedRequest = (req: IncomingMessage): boolean =>
-    /(?:^|;\s*)dsh-auth-[^=]+=/.test(String(req.headers.cookie ?? ''))
-  const guardHandler = (handler: NonNullable<RegisterRouteOptions['handler']>) =>
-    async (req: unknown, resRaw: unknown) => {
-      const res = resRaw as ServerResponse
-      if (!isTrustedRequest(req as IncomingMessage)) {
-        res.statusCode = 401
-        res.setHeader('Content-Type', 'application/json; charset=utf-8')
-        res.end('{"ok":false,"error":"unauthorized"}')
-        return
-      }
-      return handler(req, res)
-    }
-  // Scope the guard to THIS plugin's registrations only: never patch the host
-  // webServer singleton in place — other plugins' routes registered through the
-  // same service instance must keep their own (unguarded) semantics.
-  const rawRegister = rawServer.register.bind(rawServer) as (opts: RegisterRouteOptions) => () => void
-  const server = Object.assign(Object.create(Object.getPrototypeOf(rawServer)), rawServer, {
-    register: (opts: RegisterRouteOptions) => rawRegister({
-      ...opts,
-      handler: opts.handler ? guardHandler(opts.handler) : opts.handler,
-    }),
-  })
+  // Two host generations are supported by registerAuthenticatedRoute():
+  //  - newer hosts authorize the route themselves (`auth: 'required'`) and call
+  //    the handler with an admitted peer — Desktop carries no web cookie there;
+  //  - legacy hosts have no route auth, so we require the `dsh-auth-*` cookie
+  //    (HttpOnly + SameSite=Strict) ourselves.
+  const server = {
+    register: (opts: RegisterRouteOptions): (() => void) =>
+      registerAuthenticatedRoute(rawServer, opts, (res) => sendJson(res, 401, { ok: false, error: 'unauthorized' })),
+  }
 
   // ── frame-relay switch (settings: disableFrameRelay) ──────────────────────
   // When the relay is off the plugin must not spawn the ego-cast worker, must

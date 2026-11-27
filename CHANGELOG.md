@@ -2,6 +2,20 @@
 
 所有对用户可见的变更集中在各版本号下。格式遵循 [Keep a Changelog](https://keepachangelog.com/)，版本语义遵循 [SemVer](http://semver.org/)。
 
+## [0.15.3] - 2026-11-27 — DSH Desktop 0.2.3+ 侧栏鉴权修复
+
+### 修复
+- **DSH Desktop 0.2.3-alpha.2 侧栏空白 / 401**（#115）：新版 DSH web server 提供路由级鉴权（`auth` 默认 `required`），Desktop 请求由 Electron 主进程凭据放行、不带旧 Web Cookie。插件此前只认 `dsh-auth-*` Cookie，把合法 Desktop 请求拒成 401。
+- 新增 `src/route-auth.ts`：注册时显式声明 `auth: 'required'`，并按**公开契约**区分宿主代次——新版宿主会把已放行的 peer 作为 handler 第三参数传入，此时不再要求旧 Cookie；旧宿主仍调用 `(req, res)`，继续执行 Cookie 兜底，保持 fail-closed。
+- `/api/ego/*` 画面路由与 `/ego/api/*` 设置网关统一走同一守卫；设置侧的执行类配置白名单限制不变。
+
+### 测试
+- 新增 `tests/route-auth.test.ts`（新/旧宿主、有/无 Cookie、无 peer 仍拒绝）；`frame-relay` 与 `gateway` 测试补充 Desktop 放行与旧宿主 401 两条路径。
+- 全量 **491 passed / 8 skipped**；typecheck/build 通过。
+
+### 致谢
+思路来自 @RayneSun 的 PR #116 与 issue #115；实现改为基于公开 handler 契约（peer 参数）而非宿主私有方法，避免未来宿主内部改名导致鉴权静默失效。
+
 ## [0.15.2] - 2026-11-23 — GPL-3.0-only 许可证变更
 
 ### 变更

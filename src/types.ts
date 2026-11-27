@@ -76,7 +76,16 @@ export interface RouteHandler {
 export interface RegisterRouteOptions {
   kind: string
   path: string
-  handler: (req: unknown, res: unknown) => void | Promise<void>
+  /**
+   * Newer DSH web servers authorize each route before dispatch
+   * (`'required'` is their default). Older hosts ignore this option.
+   */
+  auth?: 'required'
+  /**
+   * Newer hosts pass the admitted peer as the third argument; legacy hosts
+   * call the handler with `(req, res)` only. See src/route-auth.ts.
+   */
+  handler: (req: unknown, res: unknown, peer?: unknown) => void | Promise<void>
 }
 
 export interface WebServerLike {

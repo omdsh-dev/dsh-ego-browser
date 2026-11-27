@@ -16,6 +16,7 @@
 //                        → { ok: true, value: { config: ResolvedConfig } }
 // Errors carry { ok: false, error: { code, message } }.
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { registerAuthenticatedRoute } from './route-auth.ts'
 import { resolveConfig } from './config.ts'
 import { SETTINGS_NAMESPACE } from './settings.ts'
 import { rewriteGithubUrl } from './ffmpeg-manifest.ts'
@@ -54,10 +55,6 @@ const LOCAL_ONLY_SETTING_KEYS = new Set<string>([
   'chromeArgs',
   'egoCliArgs',
 ])
-
-/** Same trust fence used by the cast-server `/api/ego/*` routes. */
-const hasDshAuthCookie = (req: IncomingMessage): boolean =>
-  /(?:^|;\s*)dsh-auth-[^=]+=/.test(String(req.headers.cookie ?? ''))
 
 interface EnvelopeOk<T> { ok: true; value: T }
 interface EnvelopeError { ok: false; error: { code: string; message: string } }
@@ -100,19 +97,12 @@ export function registerEgoBrowserGateway(
   ctx.effect?.(() => {
     const webServer = (ctx as EgoContext).get?.('webServer') as WebServerLike | undefined
     if (!webServer || typeof webServer.register !== 'function') return
-    return webServer.register({
+    return registerAuthenticatedRoute(webServer, {
       kind: 'prefix',
       path: API_PREFIX,
       handler: async (reqRaw: unknown, resRaw: unknown) => {
         const req = reqRaw as IncomingMessage
         const res = resRaw as ServerResponse
-        // The gateway is registered directly on the host web server and is
-        // therefore outside the host's `/api` auth fence. Require the same
-        // DSH-issued auth cookie before reading or changing any setting.
-        if (!hasDshAuthCookie(req)) {
-          writeJson(res, 401, envelopeError('unauthorized', 'DSH authentication is required'))
-          return
-        }
         if (req.method !== 'POST') {
           writeJson(res, 405, envelopeError('method-not-allowed', 'POST only'))
           return
@@ -175,6 +165,8 @@ export function registerEgoBrowserGateway(
           writeJson(res, status, envelopeError(e?.code || 'internal', message))
         }
       },
+    }, (res) => {
+      writeJson(res, 401, envelopeError('unauthorized', 'DSH authentication is required'))
     })
   }, 'ego-browser: /ego/api routes')
 }
